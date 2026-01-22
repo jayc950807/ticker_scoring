@@ -1,0 +1,11 @@
+streamlit
+yfinance
+pandas
+numpy
+scipy
+matplotlib
+pytz
+requests
+duckduckgo_search
+deep_translator
+lxml
