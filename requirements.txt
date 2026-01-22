@@ -1,9 +1,0 @@
-streamlit
-yfinance
-pandas
-numpy
-matplotlib
-pytz
-requests
-duckduckgo_search
-deep-translator
