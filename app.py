@@ -24,6 +24,7 @@ st.markdown("""
     <style>
     .stApp { background-color: #121212; color: #e0e0e0; }
     .stTextInput > div > div > input { background-color: #262626; color: white; }
+    div[data-testid="stMetricValue"] { font-size: 1.8rem; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -79,7 +80,7 @@ def get_global_ref_cache():
 
 GLOBAL_REF_CACHE = get_global_ref_cache()
 
-# 3. 데이터 엔진 (원본 함수 100% 동일 유지)
+# 3. 데이터 엔진
 def get_stock_info(ticker):
     try:
         info = yf.Ticker(ticker).info
@@ -96,12 +97,10 @@ def get_stock_info(ticker):
 
 def get_realtime_synced_data(ticker):
     try:
-        # 1. 과거 맥락용 일봉 데이터 (2년치)
         df_daily = yf.download(ticker, period="2y", interval="1d", progress=False, auto_adjust=True)
         if isinstance(df_daily.columns, pd.MultiIndex):
             df_daily.columns = [col[0] for col in df_daily.columns]
 
-        # 2. 현재 상태용 실시간 데이터 (오늘 하루치 1분봉)
         df_intraday = yf.download(ticker, period="1d", interval="1m", progress=False, auto_adjust=True)
         if isinstance(df_intraday.columns, pd.MultiIndex):
             df_intraday.columns = [col[0] for col in df_intraday.columns]
@@ -129,7 +128,6 @@ def get_realtime_synced_data(ticker):
 
         if len(df_daily) < WINDOW_SIZE + FORECAST_DAYS: return None, None
 
-        # 3. 모든 지표 계산 (원본 그대로)
         df = df_daily.copy()
 
         df['MA5'] = df['Close'].rolling(5).mean()
@@ -235,7 +233,6 @@ def get_google_news_rss(ticker):
     return []
 
 def get_sentiment_and_short_data(ticker, df):
-    # 원본 로직 그대로
     data = {'short_pct': 0, 'short_signal': 'N/A', 'upside_pot': 0, 'analyst_signal': 'N/A', 'news_score': 0, 'news_signal': 'Neutral', 'headlines': []}
     t = yf.Ticker(ticker)
     try:
@@ -258,7 +255,6 @@ def get_sentiment_and_short_data(ticker, df):
     except: pass
 
     raw_headlines = []
-    # 뉴스 수집 로직 (예외처리 포함)
     try:
         yf_news = t.news
         if yf_news:
@@ -295,15 +291,6 @@ def get_sentiment_and_short_data(ticker, df):
     data['headlines'] = unique_headlines 
     return data
 
-def get_benchmark(mode):
-    ticker = "SPY" if mode == "SAFE" else "IWM"
-    try:
-        df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
-        if isinstance(df.columns, pd.MultiIndex): df.columns = [col[0] for col in df.columns]
-        return df
-    except: return None
-
-# [중요] 18개 기술적 지표 계산 함수 (누락 없이 포함)
 def get_18_tech_signals(df):
     last = df.iloc[-1]
     signals = []
@@ -403,15 +390,12 @@ def check_candle_pattern(df):
     if body <= (total_range * 0.1): return "Doji"
     return None
 
-def run_monte_carlo(df, num_simulations=10000, days=120): # 시뮬레이션 횟수 원본 유지
+def run_monte_carlo(df, num_simulations=10000, days=120):
     last_price = df['Close'].iloc[-1]
     target_percents = [0.3, 0.5, 0.7, 1.0, 1.5]
 
     if len(df) < 30: daily_vol = df['Log_Ret'].std()
     else: daily_vol = df['Log_Ret'].tail(30).std()
-
-    sim_df = pd.DataFrame()
-    max_peaks = []
 
     actual_sims = 5000 
     
@@ -685,10 +669,8 @@ def get_action_strategy_html(ticker, analysis, monte_res):
 
 # --- [메인 실행 함수 (UI 매핑)] ---
 def main():
-    # 사이드바 입력
     with st.sidebar:
         st.header("🔍 종목 검색")
-        # [수정됨] 초기값을 비워두고, 사용자가 입력 전에는 빈 화면 유지
         input_ticker = st.text_input("Ticker", value="").upper()
         if st.button("AI 분석 실행"):
             st.rerun()
@@ -697,9 +679,7 @@ def main():
         st.info("좌측 사이드바에 종목코드(예: NVDA)를 입력하고 실행 버튼을 누르세요.")
         return
 
-    # 로딩 및 데이터 처리
     with st.spinner(f"📡 {input_ticker} 데이터 정밀 분석 중... (원본 로직 적용)"):
-        # 1. 데이터 가져오기
         stock_info = get_stock_info(input_ticker)
         df, data_time_utc = get_realtime_synced_data(input_ticker)
         macro_data = get_market_macro()
@@ -708,41 +688,41 @@ def main():
             st.error("데이터를 불러올 수 없습니다.")
             return
 
-        # 2. 분석 수행
         monte_res = run_monte_carlo(df)
+        win_prob = monte_res[4]
         analysis = analyze_whale_mode(input_ticker, df, None, 0, 0, stock_info, monte_res[4], macro_data, data_time_utc)
         
-        # 3. 화면 렌더링 (HTML 사용)
-        
-        # 헤더
+        # [수정] 헤더에 승률 추가
         st.markdown(f"<h1 style='color:white;'>{input_ticker} <span style='font-size:0.5em; color:#888;'>{stock_info['name']}</span></h1>", unsafe_allow_html=True)
         col1, col2 = st.columns([2, 1])
         with col1:
             st.caption(f"기준: {analysis['entry_date']} | Mode: {analysis['mode']}")
         with col2:
-            st.markdown(f"<div style='text-align:right; font-size:2rem; font-weight:bold; color:{analysis['color']};'>{analysis['score']}점</div>", unsafe_allow_html=True)
+            st.markdown(f"""
+                <div style='text-align:right;'>
+                    <span style='font-size:1rem; color:#888;'>AI Score</span> <span style='font-size:2rem; font-weight:bold; color:{analysis['color']};'>{analysis['score']}</span>
+                    <br>
+                    <span style='font-size:0.8rem; color:#888;'>Win Rate</span> <span style='font-size:1.2rem; font-weight:bold; color:{C_BULL if win_prob >= 50 else '#666'};'>{win_prob:.0f}%</span>
+                </div>
+            """, unsafe_allow_html=True)
 
-        # 탭 구성
         tab1, tab2, tab3, tab4 = st.tabs(["📊 대시보드", "📑 핵심 8대요인", "🎛 18개 기술지표", "🎲 시뮬레이션"])
 
         with tab1:
-            # 액션 가이드 HTML 렌더링
             st.markdown(get_action_strategy_html(input_ticker, analysis, monte_res), unsafe_allow_html=True)
             
-            # 주요 수치
+            # [수정] 대시보드 지표에 승률 추가
             c1, c2, c3 = st.columns(3)
             c1.metric("현재가", f"${analysis['close']:.2f}")
-            c1.metric("목표가", f"${analysis['target']:.2f}")
-            c2.metric("고래 갭 (Whale Gap)", f"{analysis['adv_features']['whale_gap']:.1f}", delta_color="off")
+            c2.metric("목표가", f"${analysis['target']:.2f}")
+            c3.metric("승률 (Win Rate)", f"{win_prob:.1f}%")
             
-            # 뉴스 헤드라인
             st.markdown("---")
             st.subheader("📰 AI 뉴스 감지")
             for news in analysis['sent_data']['headlines']:
                 st.markdown(f"- {news}")
 
         with tab2:
-            # 8대 요인 카드 (HTML 스타일 복원)
             st.markdown("### 🧬 AI 정밀 진단 결과")
             for card in analysis['cards']:
                 st.markdown(f"""
@@ -756,11 +736,9 @@ def main():
                 """, unsafe_allow_html=True)
 
         with tab3:
-            # 18개 기술적 지표 (사용자가 원한 것)
             st.markdown("### 🎛 18개 기술적 지표 (Tech Signals)")
             signals = analysis['tech_signals']
             
-            # 2열로 나누어 표시
             t_col1, t_col2 = st.columns(2)
             mid = (len(signals) + 1) // 2
             
@@ -775,18 +753,15 @@ def main():
                     st.markdown(f"<div style='display:flex; justify-content:space-between; border-bottom:1px solid #333; padding:5px;'><span style='color:#ccc;'>{name}</span><span style='color:{color}; font-weight:bold;'>{val}</span></div>", unsafe_allow_html=True)
 
         with tab4:
-            # 몬테카를로 결과
             st.markdown("### 🎲 120일 미래 시뮬레이션")
             peak_yield = monte_res[6]
             min_yield = monte_res[8]
-            win_prob = monte_res[4]
             
             sc1, sc2 = st.columns(2)
             sc1.metric("예상 최고 수익", f"+{peak_yield:.1f}%")
             sc2.metric("최악의 하락폭", f"{min_yield:.1f}%")
             st.metric("승률 (Target 도달)", f"{win_prob:.1f}%")
             
-            # 추가 목표 시나리오
             st.table(pd.DataFrame(monte_res[9]).set_index('pct'))
 
 if __name__ == "__main__":
